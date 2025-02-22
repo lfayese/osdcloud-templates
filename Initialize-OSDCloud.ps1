@@ -1,19 +1,16 @@
 #Requires -RunAsAdministrator
 #Requires -PSEdition Desktop
 
-# Initialize OSDCloud Setup Script
-# This script automates the setup of OSDCloud environment
-
 [CmdletBinding()]
 param(
     [Parameter()]
     [string]$WorkspacePath = "C:\OSDCloud",
     
     [Parameter()]
-    [string[]]$CloudDrivers = @("Dell", "HP", "IntelNet", "LenovoDock", "USB", "WiFi"),
+    [string[]]$CloudDrivers = @("Dell", "HP", "IntelNet", "LenovoDock", "USB", "VMware", "WiFi"),
     
     [Parameter()]
-    [switch]$UseWinRE = $false,
+    [switch]$UseWinRE,
     
     [Parameter()]
     [string]$CustomBrandName = "BAH OSDCloud",
@@ -22,89 +19,46 @@ param(
     [string]$CustomBrandColor = "#0066CC"
 )
 
-# Function to validate prerequisites
-function Test-OSDCloudPrerequisites {
-    $Prerequisites = @{
-        "ADK Installed" = Test-Path "C:\Program Files (x86)\Windows Kits\10\Assessment and Deployment Kit"
-        "WinPE Addon" = Test-Path "C:\Program Files (x86)\Windows Kits\10\Assessment and Deployment Kit\Windows Preinstallation Environment"
-        "PowerShell" = $PSVersionTable.PSVersion.Major -ge 5
-    }
-
-    $AllPrerequisitesMet = $true
-    foreach ($prereq in $Prerequisites.GetEnumerator()) {
-        Write-Host "Checking $($prereq.Key): " -NoNewline
-        if ($prereq.Value) {
-            Write-Host "Passed" -ForegroundColor Green
-        } else {
-            Write-Host "Failed" -ForegroundColor Red
-            $AllPrerequisitesMet = $false
-        }
-    }
-    return $AllPrerequisitesMet
+# Start transcript logging
+$transcriptPath = Join-Path $env:ProgramData "Microsoft\IntuneManagementExtension\Logs\OSD"
+if (-not (Test-Path $transcriptPath)) {
+    New-Item -Path $transcriptPath -ItemType Directory -Force | Out-Null
 }
+Start-Transcript -Path (Join-Path $transcriptPath "$((Get-Date).ToString('yyyy-MM-dd-HHmmss'))-OSDCloud-Setup.log")
 
-# Function to install/update required modules
-function Install-RequiredModules {
-    Write-Host "Installing/Updating required PowerShell modules..." -ForegroundColor Cyan
-    Install-Module OSD -Force
-    Import-Module OSD -Force
-}
-
-# Function to create workspace and template
-function Initialize-OSDCloudWorkspace {
-    param (
-        [string]$Path,
-        [bool]$UseWinRE
-    )
-    
-    Write-Host "Creating OSDCloud workspace at $Path..." -ForegroundColor Cyan
-    
-    # Create template based on WinRE or standard WinPE
-    if ($UseWinRE) {
-        Write-Host "Creating OSDCloud template using WinRE..." -ForegroundColor Cyan
-        New-OSDCloudTemplate -Name "WinRE Template" -WinRE
-    } else {
-        Write-Host "Creating OSDCloud template using standard WinPE..." -ForegroundColor Cyan
-        New-OSDCloudTemplate -Name "WinPE Template"
-    }
-
-    # Create workspace
-    New-OSDCloudWorkspace -WorkspacePath $Path
-
-    # Clean up unnecessary language resources
-    $KeepTheseDirs = @('boot','efi','en-us','sources','fonts','resources')
-    Get-ChildItem "$Path\Media" | Where-Object {$_.PSIsContainer} | Where-Object {$_.Name -notin $KeepTheseDirs} | Remove-Item -Recurse -Force
-    Get-ChildItem "$Path\Media\Boot" | Where-Object {$_.PSIsContainer} | Where-Object {$_.Name -notin $KeepTheseDirs} | Remove-Item -Recurse -Force
-    Get-ChildItem "$Path\Media\EFI\Microsoft\Boot" | Where-Object {$_.PSIsContainer} | Where-Object {$_.Name -notin $KeepTheseDirs} | Remove-Item -Recurse -Force
-}
-
-# Main script execution
 try {
     Write-Host "Starting OSDCloud initialization..." -ForegroundColor Cyan
+
+    # Ensure proper execution policy
+    Set-ExecutionPolicy RemoteSigned -Force -ErrorAction Stop
     
-    # Check prerequisites
-    if (-not (Test-OSDCloudPrerequisites)) {
-        throw "Prerequisites not met. Please install Windows ADK and WinPE add-on."
-    }
-
-    # Install required modules
-    Install-RequiredModules
-
-    # Initialize workspace
-    Initialize-OSDCloudWorkspace -Path $WorkspacePath -UseWinRE $UseWinRE
-
-    # Configure WinPE with drivers and branding
-    Write-Host "Configuring WinPE with drivers and branding..." -ForegroundColor Cyan
-    Edit-OSDCloudWinPE -CloudDriver $CloudDrivers -BrandName $CustomBrandName -BrandColor $CustomBrandColor -StartOSDCloudGUI
-
+    # Install/Update required modules
+    Write-Host "Installing/Updating OSD PowerShell module..." -ForegroundColor Cyan
+    Install-Module OSD -Force -AllowClobber -ErrorAction Stop
+    Import-Module OSD -Force
+    
+    # Create new OSDCloud template
+    Write-Host "Creating new OSDCloud template..." -ForegroundColor Cyan
+    New-OSDCloud.template -Verbose
+    
+    # Create and configure workspace
+    Write-Host "Creating OSDCloud workspace at $WorkspacePath..." -ForegroundColor Cyan
+    New-OSDCloud.workspace -WorkspacePath $WorkspacePath
+    
+    # Configure WinPE with drivers and auto-start GUI
+    Write-Host "Configuring WinPE with drivers and auto-start GUI..." -ForegroundColor Cyan
+    Edit-OSDCloud.winpe -CloudDriver $CloudDrivers -StartOSDCloudGUI -BrandName $CustomBrandName -BrandColor $CustomBrandColor
+    
     # Create ISO
     Write-Host "Creating OSDCloud ISO..." -ForegroundColor Cyan
-    New-OSDCloudISO
-
+    New-OSDCloud.iso
+    
     Write-Host "OSDCloud initialization completed successfully!" -ForegroundColor Green
-    Write-Host "ISO files can be found in the workspace directory: $WorkspacePath" -ForegroundColor Yellow
-}
-catch {
+    Write-Host "ISO files can be found in: $WorkspacePath" -ForegroundColor Yellow
+
+} catch {
     Write-Error "An error occurred during OSDCloud initialization: $_"
     exit 1
+} finally {
+    Stop-Transcript
 }

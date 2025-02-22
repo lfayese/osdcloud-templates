@@ -1,4 +1,4 @@
-# cleanup.osdcloud
+# cleanup.osdcloud.ps1
 $Global:Transcript = "$((Get-Date).ToString('yyyy-MM-dd-HHmmss'))-Cleanup.log"
 Start-Transcript -Path (Join-Path "$env:ProgramData\Microsoft\IntuneManagementExtension\Logs\OSD\" $Global:Transcript) -ErrorAction Stop
 
@@ -76,78 +76,60 @@ foreach ($taskName in $tasksToRemove) {
         Write-Warning "Failed to remove scheduled task $taskName : $_"
     }
 }
-# Function to clean up OSDCloud deployment files
-function Remove-OSDCloudDeploymentFiles {
-    $PathsToClean = @(
-        "C:\OSDCloud\Logs",
-        "C:\OSDCloud\OS",
-        "C:\Drivers"
+
+function Remove-OSDCloudFiles {
+    $KeepTheseDirs = @('boot', 'efi', 'en-us', 'sources', 'fonts', 'resources')
+    
+    # Clean up OSDCloud workspace
+    $paths = @(
+        "$env:ProgramData\OSDCloud\Media",
+        "$env:ProgramData\OSDCloud\Media\Boot",
+        "$env:ProgramData\OSDCloud\Media\EFI\Microsoft\Boot"
     )
     
-    foreach ($Path in $PathsToClean) {
-        if (Test-Path $Path) {
-            Write-Host "Cleaning up $Path..." -ForegroundColor Cyan
-            Remove-Item -Path $Path -Recurse -Force -ErrorAction SilentlyContinue
+    foreach ($path in $paths) {
+        if (Test-Path $path) {
+            Get-ChildItem $path | 
+                Where-Object { $_.PSIsContainer } | 
+                Where-Object { $_.Name -notin $KeepTheseDirs } | 
+                Remove-Item -Recurse -Force
         }
+    }
+
+    # Move OSDCloud logs
+    if (Test-Path 'C:\OSDCloud\Logs') {
+        Move-Item 'C:\OSDCloud\Logs\*.*' -Destination 'C:\ProgramData\Microsoft\IntuneManagementExtension\Logs\OSD' -Force
     }
 }
 
-# Function to optimize Windows
-function Optimize-WindowsInstallation {
-    Write-Host "Optimizing Windows installation..." -ForegroundColor Cyan
+function Optimize-WindowsImage {
+    Write-Host "Running system optimization tasks..." -ForegroundColor Cyan
     
-    # Clear temporary files
-    Remove-Item -Path $env:TEMP\* -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path "C:\Windows\Temp\*" -Recurse -Force -ErrorAction SilentlyContinue
-    
-    # Clean up WinSxS folder
+    # Clean up WinSxS
     Write-Host "Cleaning up WinSxS folder..." -ForegroundColor Cyan
     Dism.exe /Online /Cleanup-Image /StartComponentCleanup /ResetBase
     
+    # Clean up update cache
+    Write-Host "Cleaning up Windows Update cache..." -ForegroundColor Cyan
+    Stop-Service -Name wuauserv, bits -Force
+    Remove-Item "$env:SystemRoot\SoftwareDistribution\*" -Recurse -Force -ErrorAction SilentlyContinue
+    Start-Service -Name wuauserv, bits
+    
     # Clear event logs
     Write-Host "Clearing event logs..." -ForegroundColor Cyan
-    wevtutil el | Foreach-Object {wevtutil cl "$_"}
-}
-
-# Function to configure Windows Update
-function Set-WindowsUpdateConfig {
-    Write-Host "Configuring Windows Update settings..." -ForegroundColor Cyan
-    
-    # Enable Microsoft Update
-    $mu = New-Object -ComObject Microsoft.Update.ServiceManager
-    $mu.AddService2("7971f918-a847-4430-9279-4a52d1efe18d", 7, "")
-    
-    # Configure update settings via registry
-    $UpdatePath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate"
-    $AUPath = "$UpdatePath\AU"
-    
-    if (-not (Test-Path $UpdatePath)) {
-        New-Item -Path $UpdatePath -Force | Out-Null
-    }
-    if (-not (Test-Path $AUPath)) {
-        New-Item -Path $AUPath -Force | Out-Null
-    }
-    
-    # Configure auto-update settings
-    Set-ItemProperty -Path $AUPath -Name "NoAutoUpdate" -Value 0
-    Set-ItemProperty -Path $AUPath -Name "AUOptions" -Value 4
-    Set-ItemProperty -Path $AUPath -Name "ScheduledInstallDay" -Value 0
-    Set-ItemProperty -Path $AUPath -Name "ScheduledInstallTime" -Value 3
+    wevtutil el | ForEach-Object { wevtutil cl "$_" }
 }
 
 try {
-    Write-Host "Starting post-deployment cleanup and optimization..." -ForegroundColor Cyan
-    
-    # Run cleanup tasks
-    Remove-OSDCloudDeploymentFiles
-    Optimize-WindowsInstallation
-    Set-WindowsUpdateConfig
-    
-    Write-Host "Post-deployment tasks completed successfully!" -ForegroundColor Green
+    Write-Host "Starting OSDCloud cleanup process..." -ForegroundColor Cyan
+    Remove-OSDCloudFiles
+    Optimize-WindowsImage
+    Write-Host "Cleanup completed successfully!" -ForegroundColor Green
 }
 catch {
-    Write-Error "An error occurred during post-deployment tasks: $_"
+    Write-Error "An error occurred during cleanup: $_"
     exit 1
 }
-
-Stop-Transcript
+finally {
+    Stop-Transcript
+}

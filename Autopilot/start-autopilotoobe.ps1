@@ -112,7 +112,7 @@ Set-Location 'C:\Program Files\WindowsPowerShell\Scripts'
 # Check if the script exists
 if (Test-Path .\Get-WindowsAutoPilotInfoCommunity.ps1) {
 
-iex (irm 'https://AzKvSpConnect-MgGraph.ps1')
+Invoke-Expression (Invoke-RestMethod 'https://AzKvSpConnect-MgGraph.ps1')
 
 # Execute the script
 .\Get-WindowsAutoPilotInfoCommunity.ps1 -Online -GroupTag $selectedOption.GroupTag -AssignedUser $userEmail -assign 

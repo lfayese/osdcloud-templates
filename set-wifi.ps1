@@ -5,7 +5,7 @@ param(
     [string]$WifiSSID,
     
     [Parameter()]
-    [string]$WifiPassword,
+    [System.Security.SecureString]$WifiPassword,
     
     [Parameter()]
     [switch]$PersistentConnection
@@ -35,7 +35,7 @@ function Enable-WinPEWireless {
 function New-WirelessProfile {
     param(
         [string]$SSID,
-        [string]$Password
+        [System.Security.SecureString]$Password
     )
     
     $ProfileXML = @"
@@ -59,7 +59,7 @@ function New-WirelessProfile {
             <sharedKey>
                 <keyType>passPhrase</keyType>
                 <protected>false</protected>
-                <keyMaterial>$Password</keyMaterial>
+                <keyMaterial>$(ConvertFrom-SecureString -SecureString $Password -AsPlainText)</keyMaterial>
             </sharedKey>
         </security>
     </MSM>
@@ -82,7 +82,7 @@ function Connect-WirelessNetwork {
     
     try {
         # Add the wireless profile
-        $Output = netsh wlan add profile filename="$ProfilePath"
+       $Output  = netsh wlan add profile filename="$ProfilePath"
         if ($LASTEXITCODE -ne 0) {
             throw "Failed to add wireless profile"
         }
