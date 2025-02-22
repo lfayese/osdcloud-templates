@@ -1,119 +1,154 @@
-# Check if the script is running in an administrative context
-if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Write-Host "Please run this script as an Administrator!" -ForegroundColor Red
-    return
+# Start logging
+$Global:Transcript = "$((Get-Date).ToString('yyyy-MM-dd-HHmmss'))-Start-CloudImage.log"
+$LogPath = "$env:ProgramData\Microsoft\IntuneManagementExtension\Logs\OSD"
+if (!(Test-Path $LogPath)) {
+    New-Item -Path $LogPath -ItemType Directory -Force | Out-Null
+}
+Start-Transcript -Path (Join-Path $LogPath $Global:Transcript) -ErrorAction Stop
+
+function Test-AdminRights {
+    $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if (-not $isAdmin) {
+        throw "This script requires Administrator privileges"
+    }
 }
 
-# Function to install or update the OSD module
 function Install-OrUpdateOSDModule {
-    $moduleName = "OSD"
-    $module = Get-Module -Name $moduleName -ListAvailable
-
-    if (!$module) {
-        Write-Host "Installing the $moduleName PowerShell Module" -ForegroundColor Cyan
-        Install-Module $moduleName -Force -Scope AllUsers
-    }
-    else {
-        Write-Host "Updating the $moduleName PowerShell Module" -ForegroundColor Cyan
-        Update-Module $moduleName -Force
-    }
-
-    if ($LASTEXITCODE -ne 0) {
-        Write-Error "Failed to $($module ? 'update' : 'install') the $moduleName module. Please check your internet connection and try again."
+    param(
+        [string]$ModuleName = "OSD"
+    )
+    try {
+        $module = Get-Module -Name $ModuleName -ListAvailable
+        if (-not $module) {
+            Write-Host "Installing $ModuleName PowerShell Module..." -ForegroundColor Cyan
+            Install-Module $ModuleName -Force -Scope AllUsers -ErrorAction Stop
+            Write-Host "$ModuleName module installed successfully" -ForegroundColor Green
+        } else {
+            Write-Host "Updating $ModuleName PowerShell Module..." -ForegroundColor Cyan
+            Update-Module $ModuleName -Force -ErrorAction Stop
+            Write-Host "$ModuleName module updated successfully" -ForegroundColor Green
+        }
+        return $true
+    } catch {
+        Write-Error "Failed to manage $ModuleName module: $_"
         return $false
     }
-
-    Write-Host "$moduleName PowerShell Module $($module ? 'updated' : 'installed') successfully" -ForegroundColor Green
-    return $true
 }
 
-# Check and update/install the OSD module
-if (-not (Install-OrUpdateOSDModule)) {
-    return
+function Show-Menu {
+    $header = @"
+================ Main Menu ==================
+Welcome To Workplace OSDCloud Image
+=============================================
+=============================================
+
+"@
+    $menu = @(
+        "1: Start the OSDCloud process with FindImageFile parameter"
+        "2: Start the legacy OSDCloud CLI (Start-OSDCloud)"
+        "3: Start the graphical OSDCloud (Start-OSDCloudGUI)"
+        "0: Exit"
+        "99: Reload !!!"
+    )
+    
+    Write-Host $header -ForegroundColor Yellow
+    $menu | ForEach-Object { Write-Host $_ -ForegroundColor Yellow }
+    Write-Host "`n DISCLAIMER: USE AT YOUR OWN RISK - Going further will erase all data on your disk !`n" -ForegroundColor Red -BackgroundColor Black
 }
 
-# Import OSDCloud Module
+function Start-OSDCloudProcess {
+    param(
+        [string]$Option
+    )
+    
+    try {
+        switch ($Option) {
+            '1' {
+                Write-Host "Starting OSDCloud with FindImageFile parameter..." -ForegroundColor Cyan
+                Start-OSDCloud -FindImageFile -ErrorAction Stop
+            }
+            '2' {
+                Write-Host "Starting legacy OSDCloud CLI..." -ForegroundColor Cyan
+                Start-OSDCloud -ErrorAction Stop
+            }
+            '3' {
+                Write-Host "Starting OSDCloud GUI..." -ForegroundColor Cyan
+                Start-OSDCloudGUI -ErrorAction Stop
+            }
+            '99' {
+                Write-Host "Reloading from USB drive..." -ForegroundColor Cyan
+                $usbScript = 'X:\OSDCloud\Scripts\Start-CloudImage.ps1'
+                if (Test-Path $usbScript) {
+                    & $usbScript
+                } else {
+                    throw "USB script not found at: $usbScript"
+                }
+            }
+            default {
+                throw "Invalid option: $Option"
+            }
+        }
+        Write-Host "OSDCloud process completed successfully" -ForegroundColor Green
+        return $true
+    } catch {
+        Write-Error "Failed to execute OSDCloud process: $_"
+        return $false
+    }
+}
+
+function Restart-WinPE {
+    try {
+        Write-Host "Initiating WinPE reboot..." -ForegroundColor Cyan
+        Stop-Transcript
+        Start-Sleep -Seconds 3  # Give time for transcript to complete
+        wpeutil reboot
+    } catch {
+        Write-Error "Failed to reboot WinPE: $_. Please reboot manually."
+    }
+}
+
+# Main execution block
 try {
-    Write-Host "Importing the OSDCloud PowerShell Module" -ForegroundColor Cyan
-    Import-Module OSDCloud -ErrorAction Stop
-    Write-Host "OSDCloud PowerShell Module imported successfully" -ForegroundColor Green
-}
-catch {
-    Write-Error "Failed to import OSDCloud module. Please ensure it's available in the WinPE environment."
-    return
-}
+    # Check admin rights
+    Test-AdminRights
 
-# Main Menu
-$menu = @(
-    "1: Start the OSDCloud process with the FindImageFile parameter",
-    "2: Start the legacy OSDCloud CLI (Start-OSDCloud)",
-    "3: Start the graphical OSDCloud (Start-OSDCloudGUI)",
-    #"4: Windows Custom WIMs (Azure storage file share)",
-    "0: Exit",
-    "99: Reload !!!"
-)
-Write-Host "================ Main Menu ==================" -ForegroundColor Yellow
-Write-Host "Welcome To Workplace OSDCloud Image"
-Write-Host "=============================================" -ForegroundColor Yellow
-Write-Host "=============================================`n" -ForegroundColor Yellow
-$menu | ForEach-Object { Write-Host $_ -ForegroundColor Yellow }
-Write-Host "`n DISCLAIMER: USE AT YOUR OWN RISK - Going further will erase all data on your disk ! `n"-ForegroundColor Red
-
-# User Input
-$userInput = Read-Host "Please make a selection"
-
-# Switch based on user input
-switch ($userInput) {
-    '1' {
-        try {
-            Write-Host "Starting OSDCloud with FindImageFile parameter" -ForegroundColor Cyan
-            Start-OSDCloud -FindImageFile -ErrorAction Stop
-            Write-Host "OSDCloud process completed successfully" -ForegroundColor Green
-        }
-        catch {
-            Write-Error "An error occurred while executing Start-OSDCloud: $_"
-            return
-        }
+    # Install/Update and Import OSD module
+    if (-not (Install-OrUpdateOSDModule)) {
+        throw "Failed to prepare OSD module"
     }
-    '2' { Start-OSDCloud } 
-    '3' { Start-OSDCloudGUI }
-    #'4' {
-    #    # Connect Azure Storage file share for custom DELL WIM access
-    #    Write-Host -ForegroundColor Yellow "Connect to Azure File Share ..."
-    #    $storageAccountName = ""
-    #    $storageKey = "" | ConvertTo-SecureString
-    #    $storageCredential = New-Object System.Management.Automation.PSCredential -ArgumentList ($storageAccountName, $storageKey)
-    #    $storageContext = New-AzStorageContext -StorageAccountName $storageAccountName -StorageAccountKey $storageKey
-    #    Set-AzStorageAccount -Name $storageAccountName -Context $storageContext
-    #    Write-Host -ForegroundColor Yellow "Mounting drive O: ..."
-    #    try {
-    #        New-PSDrive -Name O -PSProvider FileSystem -Root "\\osdcloud.file.core.windows.net\osdcloud-fs" -Credential $storageCredential -Scope Global
-    #        Write-Host -ForegroundColor Green "Drive O: mounted successfully."
-    #        Start-OSDCloud -FindImageFile -ZTI -Verbose
-    #    } catch {
-    #        Write-Host -ForegroundColor Red "Failed to mount drive O:."
-    #    }
-    #}
-    '0' { Exit }
-    '99' {
-        try {
-            Invoke-Expression (Invoke-RestMethod 'URL_TO_SCRIPT_FILE')
-        }
-        catch {
-            Write-Error "Failed to execute the script. Please check the URL and try again."
-            return
-        }
-    }
-    default {
-        Write-Error "Invalid selection. Please try again."
-        return
-    }
-}
 
-# Reboot WinPE
-try {
-    wpeutil reboot
-}
-catch {
-    Write-Error "Failed to reboot WinPE. Please reboot manually."
+    try {
+        Write-Host "Importing OSDCloud module..." -ForegroundColor Cyan
+        Import-Module OSDCloud -Force -ErrorAction Stop
+        Write-Host "OSDCloud module imported successfully" -ForegroundColor Green
+    } catch {
+        throw "Failed to import OSDCloud module: $_"
+    }
+
+    # Show menu and get user input
+    do {
+        Show-Menu
+        $userInput = Read-Host "Please make a selection"
+        
+        if ($userInput -eq '0') {
+            Write-Host "Exiting..." -ForegroundColor Yellow
+            break
+        }
+        
+        if (Start-OSDCloudProcess -Option $userInput) {
+            Restart-WinPE
+            break
+        }
+        
+        Write-Host "Press Enter to continue..." -ForegroundColor Yellow
+        $null = Read-Host
+        Clear-Host
+        
+    } while ($true)
+
+} catch {
+    Write-Error "Script execution failed: $_"
+    exit 1
+} finally {
+    Stop-Transcript
 }

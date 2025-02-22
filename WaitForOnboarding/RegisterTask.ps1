@@ -16,33 +16,56 @@ if (-not (Test-Path $logDirectory)) {
 # Write OSD completion to log file
 WriteToLogFile "OSD Complete Registering WaitForOnboarding Task"
 
-# Define URL and target locations
-$ps1fileurl = '/WaitforOnboard.ps1'
-$targetLocation2 = 'C:\Scripts\WaitforOnboard.ps1'
+# Define variables
+$directory = "C:\OSDCloud\Scripts"
+$targetLocation = Join-Path $directory "WaitforOnboarding.xml"
+$targetLocation2 = Join-Path $directory "WaitforOnboard.ps1"
 
-$XmlFileUrl = '/WaitforOnboarding.xml'
-$targetLocation = 'C:\Scripts\WaitforOnboarding.xml'
-
-# Ensure target directory exists
-$directory = Split-Path $targetLocation -Parent
+# Create directory if it doesn't exist
 if (-not (Test-Path $directory)) {
     New-Item -ItemType Directory -Path $directory -Force | Out-Null
 }
 
-# Download XML file and PowerShell script
-try {
-    Invoke-WebRequest -Uri $XmlFileUrl -OutFile $targetLocation
-    Invoke-WebRequest -Uri $ps1fileurl -OutFile $targetLocation2
-    Write-Host "Files downloaded successfully."
-} catch {
-    Write-Host "An error occurred while downloading files: $_"
+# Copy files from USB
+$sourceFiles = @{
+    "WaitforOnboarding.xml" = $targetLocation
+    "WaitforOnboard.ps1" = $targetLocation2
+}
+
+foreach ($file in $sourceFiles.GetEnumerator()) {
+    $sourcePath = "X:\OSDCloud\Scripts\WaitForOnboarding\$($file.Key)"
+    try {
+        if (Test-Path $sourcePath) {
+            Copy-Item -Path $sourcePath -Destination $file.Value -Force -ErrorAction Stop
+            Write-Host "Successfully copied $($file.Key)"
+            WriteToLogFile "Successfully copied $($file.Key) to $($file.Value)"
+        } else {
+            throw "Source file not found: $sourcePath"
+        }
+    } catch {
+        $errorMsg = "Failed to copy $($file.Key): $_"
+        Write-Host $errorMsg -ForegroundColor Red
+        WriteToLogFile $errorMsg
+        exit 1
+    }
 }
 
 # Register the scheduled task
 try {
-    $xmlContent = Get-Content $targetLocation -Raw
-    Register-ScheduledTask -Xml $xmlContent -TaskName 'WaitforOnboarding'
-    Write-Host "Scheduled task registered successfully."
+    if (Test-Path $targetLocation) {
+        $xmlContent = Get-Content $targetLocation -Raw -ErrorAction Stop
+        $existingTask = Get-ScheduledTask -TaskName 'WaitforOnboarding' -ErrorAction SilentlyContinue
+        if ($existingTask) {
+            Unregister-ScheduledTask -TaskName 'WaitforOnboarding' -Confirm:$false
+        }
+        Register-ScheduledTask -Xml $xmlContent -TaskName 'WaitforOnboarding'
+        WriteToLogFile "Scheduled task registered successfully"
+    } else {
+        throw "Task XML file not found at $targetLocation"
+    }
 } catch {
-    Write-Host "An error occurred while registering the scheduled task: $_"
+    $errorMsg = "Failed to register scheduled task: $_"
+    Write-Host $errorMsg -ForegroundColor Red
+    WriteToLogFile $errorMsg
+    exit 1
 }

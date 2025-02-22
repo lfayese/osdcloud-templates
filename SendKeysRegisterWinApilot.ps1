@@ -1,5 +1,5 @@
 # Define the script folder path and the path for SendKeys script
-$scriptFolderPath = "$env:TEMP\OSDCloud\Scripts"
+$scriptFolderPath = "C:\OSDCloud\Scripts"
 $ScriptPathSendKeys = Join-Path -Path $scriptFolderPath -ChildPath "SendKeys.ps1"
 
 # Check if the script folder path exists, if not, create it
@@ -25,7 +25,23 @@ Start-Sleep -Seconds 1
 Write-Host -ForegroundColor DarkGray "SendKeys: SHIFT + F10"
 `$WscriptShell.SendKeys("+({F10})")
 
-Invoke-Expression (Invoke-RestMethod -Uri 'https://start-winautopilotreg.ps1')
+# Validate and execute remote script
+try {
+    $scriptContent = Invoke-RestMethod -Uri 'https://start-winautopilotreg.ps1' -ErrorAction Stop
+    # Basic validation that content looks like PowerShell
+    if ($scriptContent -match '^[# \t]*(?:function|param|begin|process|end|if|foreach|while|do|switch|try|catch)[ \t{]') {
+        $tempPath = Join-Path $env:TEMP "WinAutopilotReg_$(Get-Date -Format 'yyyyMMddHHmmss').ps1"
+        $scriptContent | Out-File -FilePath $tempPath -Encoding UTF8
+        . $tempPath
+        Remove-Item -Path $tempPath -Force
+    } else {
+        throw "Retrieved content does not appear to be a valid PowerShell script"
+    }
+} catch {
+    Write-Error "Failed to execute remote script: $_"
+    Stop-Transcript
+    exit 1
+}
 
 Stop-Transcript -Verbose
 "@

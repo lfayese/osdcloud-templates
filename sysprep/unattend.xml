@@ -42,17 +42,17 @@
                 </SynchronousCommand>
 		<SynchronousCommand wcm:action="add">
                     <Order>3</Order>
-                    <CommandLine>Start-Process PowerShell -ArgumentList "-NoL -C Invoke-Expression (Invoke-RestMethod -Uri 'https://check-autopilotprereq.ps1')" -Wait</CommandLine>
+                    <CommandLine>Start-Process PowerShell -ArgumentList "-NoL -C &amp; 'C:\OSDCloud\Scripts\check-autopilotprereq.ps1'" -Wait</CommandLine>
                     <Description>Check Windows Autopilot Registration prerequisites</Description>
                 </SynchronousCommand>
                 <SynchronousCommand wcm:action="add">
                     <Order>4</Order>
-                    <CommandLine>Start-Process PowerShell -ArgumentList "-NoL -C Invoke-Expression (Invoke-RestMethod -Uri 'https://SendKeysRegisterWinAp.ps1')" -Wait</CommandLine>
+                    <CommandLine>Start-Process PowerShell -ArgumentList "-NoL -C &amp; 'C:\OSDCloud\Scripts\SendKeysRegisterWinApilot.ps1'" -Wait</CommandLine>
                     <Description>Executing Windows Autopilot Registration Script...</Description>
                 </SynchronousCommand>
                 <SynchronousCommand wcm:action="add">
                     <Order>5</Order>
-                    <CommandLine>Start-Process PowerShell -ArgumentList "-NoL -C Invoke-Expression (Invoke-RestMethod -Uri 'https://RegisterTask.ps1')" -Wait</CommandLine>
+                    <CommandLine>Start-Process PowerShell -ArgumentList "-NoL -C &amp; 'C:\OSDCloud\Scripts\RegisterTask.ps1'" -Wait</CommandLine>
                     <Description>Register WaitForOnBoarding Task</Description>
                 </SynchronousCommand>
                 <SynchronousCommand wcm:action="add">

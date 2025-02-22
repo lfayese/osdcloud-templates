@@ -11,9 +11,9 @@ $env:Path = $env:Path+";C:\Program Files\WindowsPowerShell\Scripts"
 $Global:Transcript = "$((Get-Date).ToString('yyyy-MM-dd-HHmmss'))-Check-AutopilotPrerequisites.log"
 Start-Transcript -Path (Join-Path "$env:ProgramData\Microsoft\IntuneManagementExtension\Logs\OSD\" $Global:Transcript) -ErrorAction Ignore
 
-Write-Host "Execute Autopilot Prerequitites Check" -ForegroundColor Green
+Write-Host "Execute Autopilot Prerequisites Check" -ForegroundColor Green
 
-Set-ExecutionPolicy -ExecutionPolicy Bypass -Force
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Force
 Install-Script -Name Check-AutopilotPrerequisites -Force
 Check-AutopilotPrerequisites
 

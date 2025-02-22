@@ -1,0 +1,38 @@
+{
+    "BrandName": "BAH OSDCloud",
+    "BrandColor": "#0066CC",
+    "OSActivation": "Volume",
+    "OSEdition": "Enterprise",
+    "OSLanguage": "en-us",
+    "OSName": "Windows 11 22H2 x64",
+    "OSReleaseID": "22H2",
+    "OSVersion": "Windows 11",
+    "OSActivationValues": [
+        "Volume",
+        "Retail"
+    ],
+    "OSEditionValues": [
+        "Enterprise",
+        "Pro"
+    ],
+    "OSLanguageValues": [
+        "en-us"
+    ],
+    "OSNameValues": [
+        "Windows 11 22H2 x64",
+        "Windows 10 22H2 x64"
+    ],
+    "OSReleaseIDValues": [
+        "22H2"
+    ],
+    "OSVersionValues": [
+        "Windows 11",
+        "Windows 10"
+    ],
+    "ClearDiskConfirm": true,
+    "restartComputer": true,
+    "updateDiskDrivers": true,
+    "updateFirmware": true,
+    "updateNetworkDrivers": true,
+    "updateSCSIDrivers": true
+}

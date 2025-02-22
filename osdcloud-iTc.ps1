@@ -1,3 +1,96 @@
+# OSDCloud Orchestrator Script
+[CmdletBinding()]
+param(
+    [Parameter()]
+    [ValidateSet('Windows10', 'Windows11')]
+    [string]$OSVersion = 'Windows11',
+    
+    [Parameter()]
+    [ValidateSet('Enterprise', 'Pro')]
+    [string]$Edition = 'Enterprise',
+    
+    [Parameter()]
+    [string]$Language = 'en-us',
+    
+    [Parameter()]
+    [switch]$ZTI
+)
+
+# Phase tracking for resume capability
+$PhaseFile = "X:\OSDCloud\CurrentPhase.txt"
+
+function Write-Phase {
+    param([string]$Phase)
+    $Phase | Out-File -FilePath $PhaseFile -Force
+    Write-Host "Current deployment phase: $Phase" -ForegroundColor Cyan
+}
+
+function Get-CurrentPhase {
+    if (Test-Path $PhaseFile) {
+        return Get-Content $PhaseFile
+    }
+    return "Initialize"
+}
+
+# Main deployment orchestration
+try {
+    $CurrentPhase = Get-CurrentPhase
+
+    switch ($CurrentPhase) {
+        "Initialize" {
+            Write-Phase "Initialize"
+            
+            # Run prerequisite checks
+            . .\check-autopilotprereq.ps1
+            
+            # Set up wireless if needed
+            . .\set-wifi.ps1
+            
+            Write-Phase "PrepareSystem"
+        }
+
+        "PrepareSystem" {
+            Write-Phase "PrepareSystem"
+            
+            # Check and configure TPM
+            . .\tpmAttestation.ps1
+            
+            # Start OSDCloud deployment
+            if ($ZTI) {
+                Start-OSDCloud -OSVersion $OSVersion -OSEdition $Edition -OSLanguage $Language -ZTI
+            } else {
+                Start-OSDCloudGUI
+            }
+            
+            Write-Phase "PostOS"
+        }
+
+        "PostOS" {
+            Write-Phase "PostOS"
+            
+            # Run post-deployment cleanup
+            . .\cleanup.osdcloud.ps1
+            
+            # Configure OOBE and Autopilot
+            . .\oobetasks.osdcloud.ps1
+            
+            # Run Windows Updates
+            . .\WindowsUpdates.ps1 -IncludeFirmware
+            
+            Write-Phase "Complete"
+        }
+
+        "Complete" {
+            Write-Host "OSDCloud deployment completed successfully!" -ForegroundColor Green
+            Remove-Item $PhaseFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+catch {
+    Write-Error "Deployment failed in phase $CurrentPhase : $_"
+    exit 1
+}
+
 # =============================================================
 # Initialize
 # =============================================================
@@ -10,6 +103,24 @@ $OSDCloudTemplateDir    = "C:\OSDCloud\Template"
 $ADKWinpeWim            = Join-Path $ADKMediaDir "sources\boot.wim"
 $BootWim                = Join-Path $OSDCloudTemplateDir "boot.wim"
 $MountPath              = "C:\OSDCloud\Mount"
+
+# Cleanup any existing mount points
+if (Test-Path $MountPath) {
+    $mountedImages = Get-WindowsImage -Mounted | Where-Object { $_.Path -eq $MountPath }
+    if ($mountedImages) {
+        Write-Warning "Found existing mounted image. Attempting cleanup..."
+        try {
+            Dismount-WindowsImage -Path $MountPath -Discard -ErrorAction Stop
+        } catch {
+            Write-Error "Failed to dismount existing image: $_"
+            exit 1
+        }
+    }
+    Remove-Item -Path $MountPath -Force -Recurse
+}
+
+# Create fresh mount directory
+New-Item -ItemType Directory -Path $MountPath -Force | Out-Null
 
 # Mirror the ADK Media directory to the OSDCloud Template
 Write-Host "Mirroring ADK Media directory to OSDCloud Template..."

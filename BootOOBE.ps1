@@ -10,56 +10,67 @@ Get-Process sysprep -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAc
 Remove-Item -Path "C:\Windows\Panther\unattend.xml" -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -Path "C:\Windows\Setup\Scripts\init.ps1" -Recurse -Force -ErrorAction SilentlyContinue # Prevent loop after OOBE
 
-# Download init2.ps1 from GitHub and rename to init.ps1
-$GitHubFileUrl = 'https://init2.ps1'
+# Copy init.ps1 from USB to Windows
+$SourcePath = "X:\OSDCloud\Scripts\init.ps1"
 $DestinationFolder = 'C:\Windows\Setup\Scripts'
-$NewFileName = 'init.ps1'
-$DestinationPath = Join-Path -Path $DestinationFolder -ChildPath $NewFileName
+$DestinationPath = Join-Path -Path $DestinationFolder -ChildPath 'init.ps1'
 
-# Download file with retry mechanism and error handling
-$downloadSuccess = $false
-do {
-    try {
-        Invoke-WebRequest -Uri $GitHubFileUrl -OutFile $DestinationPath -ErrorAction Stop
-        Write-Host "File downloaded successfully."
-        $downloadSuccess = $true
-    } catch {
-        Write-Host "An error occurred while downloading. Retrying..."
-        Start-Sleep -Seconds 5
-    }
-} while (-not $downloadSuccess)
+# Create destination directory if it doesn't exist
+if (!(Test-Path -Path $DestinationFolder)) {
+    New-Item -Path $DestinationFolder -ItemType Directory -Force | Out-Null
+}
+
+# Copy file with error handling
+try {
+    Copy-Item -Path $SourcePath -Destination $DestinationPath -Force -ErrorAction Stop
+    Write-Host "File copied successfully to $DestinationPath"
+} catch {
+    Write-Error "Failed to copy init.ps1: $_"
+    exit 1
+}
+
+# Ensure setup scripts directory exists
+$setupScriptsDir = 'C:\Windows\Setup\Scripts'
+if (!(Test-Path -Path $setupScriptsDir)) {
+    New-Item -Path $setupScriptsDir -ItemType Directory -Force | Out-Null
+}
 
 # Generate SetupComplete.cmd file
 $SetupCompleteCMDContent = @"
-powershell.exe -command set-executionpolicy bypass -force
+powershell.exe -command set-executionpolicy remotedsigned -force
 powershell.exe -file "%~dp0init.ps1"
-powershell.exe -command "Invoke-Expression (Invoke-RestMethod -Uri 'https://oobetasks.osdcloud.ps1'); Read-Host 'Press Enter to exit.'
+powershell.exe -command "& 'X:\OSDCloud\Scripts\oobetasks.osdcloud.ps1'"
 "@
-$SetupCompleteCMDPath = 'C:\Windows\Setup\Scripts\SetupComplete.cmd'
-$SetupCompleteCMDContent | Out-File -FilePath $SetupCompleteCMDPath -Encoding ascii -Force
 
-# Terminate any running sysprep processes again
-Get-Process sysprep -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+$SetupCompleteCMDPath = Join-Path $setupScriptsDir 'SetupComplete.cmd'
 
-Start-Process cmd -ArgumentList "/c $SetupCompleteCMDPath" -Wait
+try {
+    $SetupCompleteCMDContent | Out-File -FilePath $SetupCompleteCMDPath -Encoding ascii -Force -ErrorAction Stop
+    Write-Host "Successfully created SetupComplete.cmd"
+} catch {
+    Write-Error "Failed to create SetupComplete.cmd: $_"
+    exit 1
+}
 
-# Download unattend.xml from GitHub and place it in the sysprep folder
-$FileUrl = 'https://unattend.xml'
-$DestinationPath = 'C:\Windows\system32\sysprep\unattend.xml'
+# Copy unattend.xml from USB to sysprep folder
+$UnattendSource = 'X:\OSDCloud\Scripts\unattend.xml'
+$UnattendDest = 'C:\Windows\system32\sysprep\unattend.xml'
 
-$unattendDownloaded = $false
-do {
-    try {
-        Invoke-WebRequest -Uri $FileUrl -OutFile $DestinationPath -ErrorAction Stop
-        Write-Host "Download successful. File saved at: $DestinationPath"
-        $unattendDownloaded = $true
-    } catch {
-        Write-Host "Download failed. Retrying..."
-        Start-Sleep -Seconds 5
-    }
-} while (-not $unattendDownloaded)
+# Ensure sysprep directory exists
+$sysprepDir = Split-Path $UnattendDest -Parent
+if (!(Test-Path -Path $sysprepDir)) {
+    New-Item -Path $sysprepDir -ItemType Directory -Force | Out-Null
+}
+
+try {
+    Copy-Item -Path $UnattendSource -Destination $UnattendDest -Force -ErrorAction Stop
+    Write-Host "Unattend.xml copied successfully"
+} catch {
+    Write-Error "Failed to copy unattend.xml: $_"
+    exit 1
+}
 
 # Execute sysprep
-Start-Process -FilePath "C:\Windows\System32\Sysprep\sysprep.exe" -ArgumentList "/oobe /quiet /reboot /unattend:$DestinationPath" -Wait 
+Start-Process -FilePath "C:\Windows\System32\Sysprep\sysprep.exe" -ArgumentList "/oobe /quiet /reboot /unattend:$UnattendDest" -Wait 
 
 exit(0)

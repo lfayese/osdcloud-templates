@@ -1,57 +1,144 @@
-###############################################################################################################
-######                                         Set Variables                                             ######
-###############################################################################################################
-
-$tenantid = ""
-$appid = ""
-$vaultname = ""
-$certname = ""
-
-###############################################################################################################
-######                                         Install Modules                                           ######
-###############################################################################################################
-Write-Output "Installing Intune modules if required (current user scope)"
-# Get NuGet
-$provider = Get-PackageProvider NuGet -ErrorAction Ignore
-if (-not $provider) {
-    Write-Host "Installing provider NuGet"
-    Find-PackageProvider -Name NuGet -ForceBootstrap -IncludeDependencies
+# Start logging
+$Global:Transcript = "$((Get-Date).ToString('yyyy-MM-dd-HHmmss'))-AzKvSpConnect.log"
+$LogPath = "$env:ProgramData\Microsoft\IntuneManagementExtension\Logs\OSD"
+if (!(Test-Path $LogPath)) {
+    New-Item -Path $LogPath -ItemType Directory -Force | Out-Null
 }
+Start-Transcript -Path (Join-Path $LogPath $Global:Transcript) -ErrorAction Stop
 
-Write-Output "Installing Microsoft Graph Authentication modules if required (current user scope)"
+try {
+    ###############################################################################################################
+    ######                                         Set Variables                                               ######
+    ###############################################################################################################
+    
+    # Required parameters validation
+    $requiredParams = @{
+        tenantId = ""
+        appId = ""
+        vaultName = ""
+        certName = ""
+    }
 
-# Install Graph Groups module if not available
-Install-Module -Name Microsoft.Graph.Authentication -Repository PSGallery -Force -AllowClobber -Scope AllUsers
+    foreach ($param in $requiredParams.GetEnumerator()) {
+        if ([string]::IsNullOrWhiteSpace($param.Value)) {
+            throw "Required parameter '$($param.Key)' is not set"
+        }
+    }
 
-# Install Az.Accounts module if not available
-if (-not (Get-Module -ListAvailable -Name Az.Accounts)) {
-    Install-Module -Name Az.Accounts -Scope CurrentUser -Repository PSGallery -Force -AllowClobber -RequiredVersion 2.12.1
+    ###############################################################################################################
+    ######                                         Install Modules                                             ######
+    ###############################################################################################################
+    
+    function Install-RequiredModule {
+        param(
+            [Parameter(Mandatory=$true)]
+            [string]$ModuleName,
+            [string]$RequiredVersion,
+            [string]$Scope = "AllUsers"
+        )
+        
+        try {
+            $module = Get-Module -Name $ModuleName -ListAvailable
+            if (-not $module) {
+                Write-Host "Installing $ModuleName module..."
+                $params = @{
+                    Name = $ModuleName
+                    Scope = $Scope
+                    Force = $true
+                    AllowClobber = $true
+                    ErrorAction = "Stop"
+                }
+                if ($RequiredVersion) {
+                    $params.Add("RequiredVersion", $RequiredVersion)
+                }
+                Install-Module @params
+                Write-Host "$ModuleName module installed successfully" -ForegroundColor Green
+            } elseif ($RequiredVersion -and -not ($module.Version -eq $RequiredVersion)) {
+                Write-Host "Updating $ModuleName to version $RequiredVersion..."
+                Install-Module -Name $ModuleName -RequiredVersion $RequiredVersion -Force -AllowClobber -Scope $Scope
+                Write-Host "$ModuleName module updated successfully" -ForegroundColor Green
+            }
+        } catch {
+            throw "Failed to install/update $ModuleName module: $_"
+        }
+    }
+
+    # Ensure NuGet provider is available
+    if (-not (Get-PackageProvider -Name NuGet -ErrorAction SilentlyContinue)) {
+        Write-Host "Installing NuGet provider..."
+        Install-PackageProvider -Name NuGet -ForceBootstrap -Scope AllUsers -Force
+    }
+
+    # Install required modules
+    $modules = @(
+        @{Name = "Microsoft.Graph.Authentication"},
+        @{Name = "Az.Accounts"; RequiredVersion = "2.12.1"},
+        @{Name = "Az.KeyVault"; RequiredVersion = "4.9.2"}
+    )
+
+    foreach ($module in $modules) {
+        Install-RequiredModule @module
+    }
+
+    # Import modules
+    Write-Host "Importing required modules..."
+    $modules | ForEach-Object {
+        Import-Module $_.Name -Force -ErrorAction Stop
+    }
+
+    ###############################################################################################################
+    ######                                            Connect                                                  ######
+    ###############################################################################################################
+
+    # Get Azure context using service principal
+    Write-Host "Connecting to Azure..."
+    $azConnectScript = "X:\OSDCloud\Scripts\AzSpConnect-AzAccount.ps1"
+    if (-not (Test-Path $azConnectScript)) {
+        throw "Azure connection script not found at: $azConnectScript"
+    }
+    
+    $AzureContext = & $azConnectScript
+    if (-not $AzureContext) {
+        throw "Failed to get Azure context"
+    }
+
+    # Set Azure context to specific subscription
+    Write-Host "Setting Azure context..."
+    Set-AzContext -Subscription "4dc12530-2664-4d5a-853b-c32a1c90b2da" -ErrorAction Stop
+
+    # Get certificate from Key Vault
+    Write-Host "Retrieving certificate from Key Vault..."
+    $certBase64 = Get-AzKeyVaultCertificate -VaultName $vaultName -Name $certName -ErrorAction Stop
+    if (-not $certBase64) {
+        throw "Failed to retrieve certificate from Key Vault"
+    }
+    $thumbprint = $certBase64.Thumbprint
+
+    # Connect to Microsoft Graph
+    Write-Host "Connecting to Microsoft Graph..."
+    $graphParams = @{
+        TenantId = $tenantId
+        ClientId = $appId
+        CertificateThumbprint = $thumbprint
+        ContextScope = "Process"
+        ErrorAction = "Stop"
+    }
+    
+    Connect-MgGraph @graphParams
+    
+    # Verify connection
+    $context = Get-MgContext
+    if (-not $context) {
+        throw "Failed to establish Microsoft Graph connection"
+    }
+    
+    Write-Host "Successfully connected to Microsoft Graph" -ForegroundColor Green
+    Write-Host "Connected as: $($context.Account)"
+    Write-Host "Tenant ID: $($context.TenantId)"
+
+} catch {
+    Write-Error "Script execution failed: $_"
+    exit 1
+} finally {
+    Stop-Transcript
 }
-
-# Install Az.KeyVault module if not available
-if (-not (Get-Module -ListAvailable -Name Az.KeyVault)) {
-    Install-Module -Name Az.KeyVault -Scope CurrentUser -Repository PSGallery -Force -AllowClobber -RequiredVersion 4.9.2
-}
-
-Import-Module Microsoft.Graph.Authentication
-Import-Module Az.KeyVault
-Import-Module Az.Accounts
-
-###############################################################################################################
-######                                            Connect                                                ######
-###############################################################################################################
-
-## Get the certificate from the key vault
-Write-Host "Getting certificate from the key vault"
-# Connect using a Managed Service Identity
-$AzureContext = Invoke-Expression (Invoke-WebRequest -Uri "https://AzSpConnect-AzAccount.ps1" -UseBasicParsing).Content
-
-Set-AzContext -Subscription "4dc12530-2664-4d5a-853b-c32a1c90b2da"
-
-$CertBase64 = Get-AzKeyVaultCertificate -VaultName $vaultName -Name $certName 
-$thumbprint = $certbase64.thumbprint
-
-## Connect to Graph
-Write-Host "Connecting to Graph"
-Connect-MgGraph -TenantId $tenantid -ClientId $appid -CertificateThumbprint $thumbprint -ContextScope Process
-Write-Host "Connected to Microsoft Graph!!"

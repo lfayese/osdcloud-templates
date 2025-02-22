@@ -8,92 +8,162 @@ NOTES.. Computer name can NOT be longer than 15 charaters.  There is no checking
 
 #>
 
-try {
-$tsenv = new-object -comobject Microsoft.SMS.TSEnvironment
-    }
-catch{
-Write-Output "Not in TS"
-    }
+# Start logging
+$Global:Transcript = "$((Get-Date).ToString('yyyy-MM-dd-HHmmss'))-CreateOSDComputerName.log"
+Start-Transcript -Path (Join-Path "$env:ProgramData\Microsoft\IntuneManagementExtension\Logs\OSD\" $Global:Transcript) -ErrorAction Stop
 
-$Manufacturer = (Get-WmiObject -Class:Win32_ComputerSystem).Manufacturer
-$Model = (Get-WmiObject -Class:Win32_ComputerSystem).Model
-$CompanyName = "BAH"
-$Serial = (Get-WmiObject -class:win32_bios).SerialNumber
-
-if ($Manufacturer -match "Lenovo")
-    {
-    $Model = ((Get-CimInstance -ClassName Win32_ComputerSystemProduct).Version).split(" ")[1]
-    $ComputerName = "$($Manufacturer)-$($Model)"
-    }
-elseif (($Manufacturer -match "HP") -or ($Manufacturer -match "Hew")){
-    $Manufacturer = "HP"
-    $Generation = $Model.split(" ") | Where-Object {$_ -match "G"}
-
-    if ($Model-match " Desktop PC"){$Model = $Model.replace(" Desktop PC","")}
-    if ($Model-match "EliteDesk"){$Model = $Model.replace("EliteDesk","ED")}
-    elseif($Model-match "EliteBook"){$Model = $Model.replace("EliteBook","EB")}
-    elseif($Model-match "Elite Mini"){$Model = $Model.replace("Elite Mini","EM")}
-    elseif($Model-match "Elite x360"){
-        $Model = $Model.replace("Elite x360","EBX")
-        $Size = $Model.Split(" ")[2]
-        $Model = "$($Model.Substring(0,7))$($Size) $($Generation)"
+function Get-SystemInfo {
+    try {
+        $computerSystem = Get-WmiObject -Class Win32_ComputerSystem -ErrorAction Stop
+        $bios = Get-WmiObject -Class Win32_BIOS -ErrorAction Stop
+        return @{
+            Manufacturer = $computerSystem.Manufacturer
+            Model = $computerSystem.Model
+            Serial = $bios.SerialNumber
         }
-    elseif($Model-match "ProDesk"){$Model = $Model.replace("ProDesk","PD")}
-    elseif($Model-match "ProBook"){$Model = $Model.replace("ProBook","PB")}
-    elseif($Model-match "ZBook"){$Model = $Model.replace("ZBook","ZB")}
-    if($Model-match "Fury"){$Model = "$($Model.Substring(0,11))$Generation"}
-    $Model = $model.replace(" ","")
-    if ($Model.Length -gt 15){$ComputerName = $Model.Substring(0,15)}
-    else {$ComputerName = $Model}
-    if ($ComputerName.Length -lt 15){
-    [int]$Extra = 15 - $ComputerName.Length -1
-    $LastXofSerial = $Serial.Substring($Serial.Length - $Extra, $Extra)
-    $ComputerName = "$($ComputerName)-$($LastXofSerial)"
+    } catch {
+        throw "Failed to get system information: $_"
     }
+}
 
-    }
-elseif($Manufacturer -match "Dell"){
-    $Manufacturer = "Dell"
-    $Model = (Get-WmiObject -Class:Win32_ComputerSystem).Model
-    if ($Model-match "Latitude"){$Model = $Model.replace("Latitude","L")}
-    elseif($Model-match "OptiPlex"){$Model = $Model.replace("OptiPlex","O")}
-    elseif($Model-match "Precision"){$Model = $Model.replace("Precision","P")}
-    $Model = $model.replace(" ","-")
-    if($Model-match "Tower"){
-        $Model = $Model.replace("Tower","T")
-        $Keep = $Model.Split("-") | select -First 3
-        $ComputerName = "$($Manufacturer)-$($Keep[0])-$($Keep[1])-$($Keep[2])"
-        }
-    else
-        {
-        $Keep = $Model.Split("-") | select -First 2
-        $ComputerName = "$($Manufacturer)-$($Keep[0])-$($Keep[1])"
-        }
+function Format-ComputerName {
+    param (
+        [string]$name
+    )
+    # Remove invalid characters
+    $invalid = '[^a-zA-Z0-9\-]'
+    $name = $name -replace $invalid, ''
     
+    # Ensure name length is valid (max 15 chars)
+    if ($name.Length -gt 15) {
+        $name = $name.Substring(0, 15)
     }
-elseif ($Manufacturer -match "Microsoft")
-    {
-    if ($Model -match "Virtual")
-        {
-        $Random = Get-Random -Maximum 99999
-        $ComputerName = "VM-$($CompanyName)-$($Random )"
-        if ($ComputerName.Length -gt 15){
-            $ComputerName = $ComputerName.Substring(0,15)
+    return $name
+}
+
+try {
+    Write-Host "Starting computer name generation process..."
+    
+    # Try to get Task Sequence environment
+    try {
+        $tsenv = New-Object -ComObject Microsoft.SMS.TSEnvironment
+        Write-Host "Running in Task Sequence environment"
+    } catch {
+        Write-Host "Not running in Task Sequence environment"
+        $tsenv = $null
+    }
+
+    # Get system information
+    $sysInfo = Get-SystemInfo
+    $Manufacturer = $sysInfo.Manufacturer
+    $Model = $sysInfo.Model
+    $Serial = $sysInfo.Serial
+    $CompanyName = "BAH"
+
+    Write-Host "System Information:"
+    Write-Host "- Manufacturer: $Manufacturer"
+    Write-Host "- Model: $Model"
+    Write-Host "- Serial: $Serial"
+
+    # Generate computer name based on manufacturer
+    $ComputerName = switch -Regex ($Manufacturer) {
+        "Lenovo" {
+            $modelVersion = (Get-CimInstance -ClassName Win32_ComputerSystemProduct).Version
+            if ($modelVersion) {
+                $modelNumber = $modelVersion.Split(" ")[1]
+                Format-ComputerName "$($Manufacturer)-$modelNumber"
+            } else {
+                throw "Could not determine Lenovo model version"
             }
         }
-    }
-else {
-    
-    if ($Serial.Length -ge 15)
-        {
-        $ComputerName = $Serial.substring(0,15)
+        "HP|Hewlett-Packard" {
+            $Manufacturer = "HP"
+            $name = $Model
+
+            # Replace common strings with abbreviations
+            $replacements = @{
+                " Desktop PC" = ""
+                "EliteDesk" = "ED"
+                "EliteBook" = "EB"
+                "Elite Mini" = "EM"
+                "Elite x360" = "EBX"
+                "ProDesk" = "PD"
+                "ProBook" = "PB"
+                "ZBook" = "ZB"
+            }
+
+            foreach ($key in $replacements.Keys) {
+                $name = $name.Replace($key, $replacements[$key])
+            }
+
+            # Special handling for Elite x360
+            if ($Model -match "Elite x360") {
+                $size = $Model.Split(" ")[2]
+                $generation = $Model.Split(" ") | Where-Object { $_ -match "G" }
+                $name = "EBX$size$generation"
+            }
+
+            $name = $name -replace '\s+', ''
+            $name = Format-ComputerName $name
+
+            # Add serial number suffix if name is too short
+            if ($name.Length -lt 15) {
+                $extraLength = 15 - $name.Length - 1
+                $serialSuffix = $Serial.Substring($Serial.Length - $extraLength, $extraLength)
+                $name = "$name-$serialSuffix"
+            }
+            $name
         }
-    else
-        {
-        $ComputerName = $Serial 
+        "Dell" {
+            $name = $Model -replace "Latitude", "L" `
+                          -replace "OptiPlex", "O" `
+                          -replace "Precision", "P" `
+                          -replace "Tower", "T" `
+                          -replace '\s+', '-'
+
+            if ($name -match "T") {
+                $parts = $name.Split("-") | Select-Object -First 3
+                Format-ComputerName "Dell-$($parts -join '-')"
+            } else {
+                $parts = $name.Split("-") | Select-Object -First 2
+                Format-ComputerName "Dell-$($parts -join '-')"
+            }
+        }
+        "Microsoft" {
+            if ($Model -match "Virtual") {
+                $random = Get-Random -Maximum 99999
+                Format-ComputerName "VM-$CompanyName-$random"
+            } else {
+                throw "Unexpected Microsoft model: $Model"
+            }
+        }
+        default {
+            # Fallback to serial number
+            Format-ComputerName $Serial
         }
     }
-Write-Output "====================================================="
-Write-Output "Setting OSDComputerName to $ComputerName"
-if ($tsenv){$tsenv.value('OSDComputerName') = $ComputerName}
-Write-Output "====================================================="
+
+    Write-Host "====================================================="
+    Write-Host "Generated computer name: $ComputerName"
+    Write-Host "====================================================="
+
+    # Set the computer name in the task sequence if available
+    if ($tsenv) {
+        $tsenv.Value('OSDComputerName') = $ComputerName
+        Write-Host "Set OSDComputerName in task sequence"
+    }
+
+    # Validate the final computer name
+    if ($ComputerName.Length -gt 15) {
+        throw "Generated computer name exceeds 15 characters: $ComputerName"
+    }
+    if ($ComputerName -match '[^a-zA-Z0-9\-]') {
+        throw "Generated computer name contains invalid characters: $ComputerName"
+    }
+
+} catch {
+    Write-Error "Failed to generate computer name: $_"
+    exit 1
+} finally {
+    Stop-Transcript
+}

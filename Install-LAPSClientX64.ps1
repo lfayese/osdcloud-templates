@@ -1,103 +1,145 @@
-<#LAPS Client x64 Install from Internet
-Gary Blok @gwblok Recast Software
-
-Used with OSDCloud Edition OSD
-
-#>
-try {$tsenv = new-object -comobject Microsoft.SMS.TSEnvironment}
-catch{Write-Output "Not in TS"}
-
+# LAPS Client x64 Install Script
+# Start logging
+$Global:Transcript = "$((Get-Date).ToString('yyyy-MM-dd-HHmmss'))-LAPSInstall.log"
 $ScriptName = "LAPS Client Installer"
+$ScriptVersion = "24.02.14.01"
 
-$ScriptVersion = "22.03.16.01"
-if ($tsenv){
-    $LogFolder = $tsenv.value('CompanyFolder')#Company Folder is set during the TS Var at start of TS.
-    $CompanyName = $tsenv.value('CompanyName')
-    }
-if (!($CompanyName)){$CompanyName = "RecastSoftwareIT"}#If CompanyName / CompanyFolder info not found in TS Var, use this.
-if (!($LogFolder)){$LogFolder = "$env:ProgramData\$CompanyName"}
-$LogFilePath = "$LogFolder\Logs"
-$LogFile = "$LogFilePath\WMIExplorer.log"
-
-#Download & Extract to Program Files
-$FileName = "LAPS.x64.msi"
-$URL = "https://download.microsoft.com/download/C/7/A/C7AAD914-A8A6-4904-88A1-29E657445D03/$FileName"
-$DownloadTempFile = "$env:TEMP\$FileName"
-
-<# From: https://www.ephingadmin.com/powershell-cmtrace-log-function/
-$LogFilePath = "$env:TEMP\Logs"
-$LogFile = "$LogFilePath\SetComputerName.log"
-CMTraceLog -Message  "Running Script: $ScriptName | Version: $ScriptVersion" -Type 1 -LogFile $LogFile
-
-#>
-function CMTraceLog {
-         [CmdletBinding()]
-    Param (
-		    [Parameter(Mandatory=$false)]
-		    $Message,
-		    [Parameter(Mandatory=$false)]
-		    $ErrorMessage,
-		    [Parameter(Mandatory=$false)]
-		    $Component = "$ComponentText",
-		    [Parameter(Mandatory=$false)]
-		    [int]$Type,
-		    [Parameter(Mandatory=$true)]
-		    $LogFile = "$env:ProgramData\Logs\IForgotToName.log"
-	    )
-    <#
-    Type: 1 = Normal, 2 = Warning (yellow), 3 = Error (red)
-    #>
-	    $Time = Get-Date -Format "HH:mm:ss.ffffff"
-	    $Date = Get-Date -Format "MM-dd-yyyy"
-	    if ($ErrorMessage -ne $null) {$Type = 3}
-	    if ($Component -eq $null) {$Component = " "}
-	    if ($Type -eq $null) {$Type = 1}
-	    $LogMessage = "<![LOG[$Message $ErrorMessage" + "]LOG]!><time=`"$Time`" date=`"$Date`" component=`"$Component`" context=`"`" type=`"$Type`" thread=`"`" file=`"`">"
-	    $LogMessage.Replace("`0","") | Out-File -Append -Encoding UTF8 -FilePath $LogFile
-    }
-
-if (!(Test-Path -Path $LogFilePath)){$Null = New-Item -Path $LogFilePath -ItemType Directory -Force}
-
-CMTraceLog -Message  "Running Script: $ScriptName | Version: $ScriptVersion" -Type 1 -LogFile $LogFile
-Write-Output "Running Script: $ScriptName | Version: $ScriptVersion"
-
-$TestURL = $Null
-
+# Initialize logging environment
 try {
-    $TestURL = Invoke-WebRequest -Uri $URL -DisableKeepAlive -UseBasicParsing -Method head -ErrorAction SilentlyContinue -WarningAction SilentlyContinue -InformationAction SilentlyContinue
-    }
-catch{}
-if ($TestURL.BaseResponse){
-    CMTraceLog -Message  "Successful Test of LAPS Download URL: $URL" -Type 1 -LogFile $LogFile
-    Write-Output "Successful Test of LAPS Download URL: $URL"
-    }
-else {
-    CMTraceLog -Message  "Failed Test of LAPS Download URL: $URL" -Type 1 -LogFile $LogFile
-    Write-Output "Failed Test of LAPS Download URL: $URL"
-    exit 253
-    }
+    $tsenv = New-Object -ComObject Microsoft.SMS.TSEnvironment
+    $LogFolder = $tsenv.Value('CompanyFolder')
+    $CompanyName = $tsenv.Value('CompanyName')
+} catch {
+    Write-Output "Not running in Task Sequence - using default values"
+    $CompanyName = "RecastSoftwareIT"
+    $LogFolder = "$env:ProgramData\$CompanyName"
+}
 
-CMTraceLog -Message  "Downloading $URL to $DownloadTempFile" -Type 1 -LogFile $LogFile
-Write-Output "Downloading $URL to $DownloadTempFile"
-$Download = Start-BitsTransfer -Source $URL -Destination $DownloadTempFile -DisplayName $FileName
-if (Test-Path -Path $DownloadTempFile){
-    CMTraceLog -Message  "Successfully Downloaded $FileName" -Type 1 -LogFile $LogFile
-    Write-Output "Successfully Downloaded $FileName"
-    }
-else{
-    CMTraceLog -Message "Failed to Downloaded $FileName" -Type 1 -LogFile $LogFile
-    Write-Output "Failed to Downloaded $FileName"
-    exit 253    
-    }
+$LogFilePath = "$LogFolder\Logs"
+if (!(Test-Path -Path $LogFilePath)) {
+    New-Item -Path $LogFilePath -ItemType Directory -Force | Out-Null
+}
+$LogFile = "$LogFilePath\LAPS_Install.log"
 
-#Write-Output "Downloaded Version Newer than Installed Version, overwriting Installed Version"
-CMTraceLog -Message  "Installing $FileName" -Type 1 -LogFile $LogFile
-Write-Output "Installing $FileName"
-$Install = Start-Process -FilePath "$DownloadTempFile" -ArgumentList "/qb!" -PassThru -Wait
-if ($Install.ExitCode -eq 0){
-    CMTraceLog -Message  "Installation Exit Successfully" -Type 1 -LogFile $LogFile
-    Write-Output "Installation Exit Successfully"
+function Write-CMTraceLog {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$false)]
+        [string]$Message,
+        [Parameter(Mandatory=$false)]
+        [string]$ErrorMessage,
+        [Parameter(Mandatory=$false)]
+        [string]$Component = "LAPSInstall",
+        [Parameter(Mandatory=$false)]
+        [ValidateSet(1, 2, 3)]
+        [int]$Type = 1
+    )
+    
+    $Time = Get-Date -Format "HH:mm:ss.ffffff"
+    $Date = Get-Date -Format "MM-dd-yyyy"
+    $LogMessage = "<![LOG[$Message $ErrorMessage]LOG]!><time=`"$Time`" date=`"$Date`" component=`"$Component`" context=`"`" type=`"$Type`" thread=`"`" file=`"`">"
+    $LogMessage.Replace("`0","") | Out-File -Append -Encoding UTF8 -FilePath $LogFile
+}
+
+function Install-LAPS {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$InstallerPath
+    )
+    
+    try {
+        Write-CMTraceLog -Message "Installing LAPS from: $InstallerPath"
+        $process = Start-Process -FilePath $InstallerPath -ArgumentList "/qb! /norestart" -PassThru -Wait
+        
+        switch ($process.ExitCode) {
+            0 { 
+                Write-CMTraceLog -Message "LAPS installation completed successfully"
+                return $true
+            }
+            1603 {
+                Write-CMTraceLog -Message "Fatal error during installation" -Type 3
+                return $false
+            }
+            3010 {
+                Write-CMTraceLog -Message "Installation successful - restart required" -Type 2
+                return $true
+            }
+            default {
+                Write-CMTraceLog -Message "Installation failed with exit code: $($process.ExitCode)" -Type 3
+                return $false
+            }
+        }
+    } catch {
+        Write-CMTraceLog -Message "Error during LAPS installation" -ErrorMessage $_.Exception.Message -Type 3
+        return $false
     }
+}
 
-
-CMTraceLog -Message  "--------------------------------------------------------" -Type 1 -LogFile $LogFile
+# Main execution block
+try {
+    Write-CMTraceLog -Message "Starting $ScriptName version $ScriptVersion"
+    
+    # First try local installer
+    $LocalLapsPath = "X:\OSDCloud\Software\LAPS\LAPS.x64.msi"
+    if (Test-Path -Path $LocalLapsPath) {
+        Write-CMTraceLog -Message "Found local LAPS installer"
+        if (Install-LAPS -InstallerPath $LocalLapsPath) {
+            Write-CMTraceLog -Message "Successfully installed LAPS from local source"
+            exit 0
+        }
+    }
+    
+    # If local install fails or file not found, try web download
+    $FileName = "LAPS.x64.msi"
+    $URL = "https://download.microsoft.com/download/C/7/A/C7AAD914-A8A6-4904-88A1-29E657445D03/$FileName"
+    $DownloadPath = Join-Path $env:TEMP $FileName
+    
+    Write-CMTraceLog -Message "Testing download URL accessibility"
+    try {
+        $testRequest = Invoke-WebRequest -Uri $URL -Method Head -UseBasicParsing
+        if ($testRequest.StatusCode -ne 200) {
+            throw "URL returned status code: $($testRequest.StatusCode)"
+        }
+    } catch {
+        Write-CMTraceLog -Message "Failed to access download URL" -ErrorMessage $_.Exception.Message -Type 3
+        exit 1
+    }
+    
+    Write-CMTraceLog -Message "Downloading LAPS installer"
+    try {
+        Start-BitsTransfer -Source $URL -Destination $DownloadPath -DisplayName "LAPS Download" -ErrorAction Stop
+        
+        if (!(Test-Path $DownloadPath)) {
+            throw "Download completed but file not found"
+        }
+        
+        # Verify file hash (add proper hash check if available)
+        # $expectedHash = "YOUR-EXPECTED-HASH"
+        # $actualHash = (Get-FileHash $DownloadPath -Algorithm SHA256).Hash
+        # if ($actualHash -ne $expectedHash) {
+        #     throw "File hash verification failed"
+        # }
+        
+    } catch {
+        Write-CMTraceLog -Message "Failed to download LAPS installer" -ErrorMessage $_.Exception.Message -Type 3
+        exit 1
+    }
+    
+    # Install from downloaded file
+    if (Install-LAPS -InstallerPath $DownloadPath) {
+        Write-CMTraceLog -Message "Successfully installed LAPS from downloaded installer"
+        exit 0
+    } else {
+        Write-CMTraceLog -Message "Failed to install LAPS" -Type 3
+        exit 1
+    }
+    
+} catch {
+    Write-CMTraceLog -Message "Script execution failed" -ErrorMessage $_.Exception.Message -Type 3
+    exit 1
+} finally {
+    # Cleanup
+    if (Test-Path $DownloadPath) {
+        Remove-Item -Path $DownloadPath -Force -ErrorAction SilentlyContinue
+    }
+}
